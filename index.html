@@ -1,7 +1,413 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JobHunter AI</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<header><b>JobHunter <span>AI</span></b><a href="#how">How it works</a></header>
-<main><section class="hero"><small>AI JOB-HUNTING AGENT</small><h1>Drop your CV.<br><em>Let AI hunt for work.</em></h1><p>Upload your CV once. We check your profile, search relevant opportunities and prepare personalized applications.</p><a class="btn" href="#start">Start job hunt →</a></section>
-<section class="card" id="start"><div class="num">01</div><h2>Upload your CV</h2><p>We'll check that your name, contact details and work experience are complete.</p><form id="cvForm"><input type="file" name="cv" accept=".pdf,.docx,.txt" required><button class="btn">Scan my CV</button></form><div id="status"></div></section>
-<section class="card hidden" id="profile"><div class="num">02</div><h2>Complete your profile</h2><p id="intro"></p><div id="missing"></div><div id="summary"></div><label>Where should we search?</label><select id="location"><option value="">Worldwide</option><option>Singapore</option><option>Philippines</option><option>Thailand</option><option>Malaysia</option><option>Australia</option><option>Germany</option><option>United Kingdom</option><option>United States</option><option>Norway</option></select><label class="check"><input id="remote" type="checkbox" checked> Include remote jobs</label><button id="hunt" class="btn">Find jobs for me →</button></section>
-<section class="hidden" id="results"><div class="resultsTitle"><h2>Jobs found</h2><span id="count"></span></div><div id="jobs"></div></section>
-<section class="how" id="how"><div><b>01</b><h3>Upload CV</h3><p>AI checks your profile.</p></div><div><b>02</b><h3>Choose location</h3><p>Tell us where to hunt.</p></div><div><b>03</b><h3>AI searches</h3><p>Find relevant opportunities.</p></div><div><b>04</b><h3>Applications</h3><p>Prepare personalized applications.</p></div></section></main><footer>JobHunter AI · MVP</footer><script src="/static/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JobHunter AI — Find the right job faster</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+:root{
+  --blue:#1769e0;
+  --blue-dark:#0d47a1;
+  --ink:#172033;
+  --muted:#667085;
+  --line:#e5eaf1;
+  --bg:#f7f9fc;
+  --white:#fff;
+  --green:#14804a;
+  --red:#c43232;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  color:var(--ink);
+  background:var(--bg);
+}
+header{
+  height:72px;
+  background:#fff;
+  border-bottom:1px solid var(--line);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 max(24px,calc((100% - 1120px)/2));
+  position:sticky;
+  top:0;
+  z-index:20;
+}
+.logo{font-size:22px;font-weight:800;letter-spacing:-.5px}
+.logo span{color:var(--blue)}
+header a{color:#475467;text-decoration:none;font-weight:600;font-size:14px}
+main{max-width:1120px;margin:auto;padding:0 24px}
+.hero{
+  padding:80px 0 55px;
+  display:grid;
+  grid-template-columns:1.15fr .85fr;
+  gap:60px;
+  align-items:center;
+}
+.eyebrow{
+  color:var(--blue);
+  font-size:13px;
+  font-weight:800;
+  letter-spacing:1.4px;
+  margin-bottom:18px;
+}
+.hero h1{
+  font-size:58px;
+  line-height:1.05;
+  letter-spacing:-2.5px;
+  margin:0 0 22px;
+  max-width:700px;
+}
+.hero h1 span{color:var(--blue)}
+.hero p{
+  color:var(--muted);
+  font-size:19px;
+  line-height:1.65;
+  max-width:650px;
+  margin:0 0 30px;
+}
+.hero-points{display:flex;gap:18px;flex-wrap:wrap;color:#475467;font-size:14px;font-weight:600}
+.hero-points span{display:flex;align-items:center;gap:7px}
+.hero-points b{color:var(--green)}
+.upload-preview{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:22px;
+  padding:25px;
+  box-shadow:0 18px 50px rgba(16,24,40,.08);
+}
+.preview-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.preview-title{font-weight:800}
+.badge{background:#eaf2ff;color:var(--blue);padding:6px 10px;border-radius:20px;font-size:12px;font-weight:800}
+.preview-box{
+  border:2px dashed #b9c8df;
+  border-radius:16px;
+  padding:38px 20px;
+  text-align:center;
+  background:#fafcff;
+}
+.file-icon{
+  width:52px;height:52px;border-radius:13px;background:#eaf2ff;
+  color:var(--blue);display:flex;align-items:center;justify-content:center;
+  margin:0 auto 15px;font-size:24px;font-weight:800;
+}
+.preview-box h3{margin:0 0 7px;font-size:17px}
+.preview-box p{margin:0;color:var(--muted);font-size:13px}
+.section-card{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:20px;
+  padding:34px;
+  margin:18px 0;
+  box-shadow:0 5px 20px rgba(16,24,40,.035);
+}
+.step-label{
+  color:var(--blue);
+  font-weight:800;
+  font-size:12px;
+  letter-spacing:1px;
+  margin-bottom:8px;
+}
+.section-card h2{font-size:28px;margin:0 0 8px;letter-spacing:-.6px}
+.section-card>p{color:var(--muted);margin:0 0 25px}
+.upload-area{
+  border:2px dashed #c7d2e3;
+  border-radius:16px;
+  padding:30px;
+  text-align:center;
+  background:#fbfcfe;
+}
+.upload-area input{display:block;width:100%;margin-bottom:15px}
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:0;
+  background:var(--blue);
+  color:#fff;
+  border-radius:10px;
+  padding:13px 21px;
+  font-weight:800;
+  font-size:15px;
+  cursor:pointer;
+  text-decoration:none;
+  transition:.15s;
+}
+.btn:hover{background:var(--blue-dark);transform:translateY(-1px)}
+#status{margin-top:15px;color:var(--muted);font-weight:600}
+.profile-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:20px;
+  margin:22px 0;
+}
+.info-box{
+  background:#f8fafc;
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:18px;
+}
+.info-box strong{display:block;margin-bottom:6px}
+#missing .warn,.warn{
+  background:#fff7ed;
+  border:1px solid #fed7aa;
+  color:#9a3412;
+  padding:15px;
+  border-radius:12px;
+  margin:15px 0;
+}
+.ok{
+  background:#ecfdf3;
+  border:1px solid #abefc6;
+  color:#067647;
+  padding:15px;
+  border-radius:12px;
+  margin:15px 0;
+}
+label{display:block;font-weight:700;font-size:14px;margin:18px 0 8px}
+select{
+  width:100%;
+  padding:13px;
+  border:1px solid #cfd7e3;
+  border-radius:10px;
+  background:#fff;
+  font-size:15px;
+}
+.check{display:flex;align-items:center;gap:9px;font-weight:600}
+.check input{width:18px;height:18px}
+.resultsTitle{
+  display:flex;
+  align-items:end;
+  justify-content:space-between;
+  margin:45px 0 18px;
+}
+.resultsTitle h2{font-size:30px;margin:0}
+#count{color:var(--muted);font-size:14px}
+.job{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:22px;
+  margin:12px 0;
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:14px;
+}
+.job h3{margin:0 0 6px;font-size:19px}
+.job p{color:var(--muted);margin:5px 0;line-height:1.5}
+.job>strong{
+  color:var(--blue);
+  font-size:24px;
+  text-align:right;
+}
+.job>strong small{display:block;color:var(--muted);font-size:9px;letter-spacing:1px}
+.link{color:var(--blue);font-weight:700;text-decoration:none}
+.small{
+  border:1px solid #cbd5e1;
+  background:#fff;
+  border-radius:8px;
+  padding:8px 11px;
+  cursor:pointer;
+  font-weight:700;
+  margin-left:8px;
+}
+.draft{
+  grid-column:1/-1;
+  background:#f8fafc;
+  border-radius:12px;
+  padding:16px;
+}
+.draft textarea{
+  width:100%;
+  min-height:180px;
+  margin-top:10px;
+  padding:12px;
+  border:1px solid #d5dce6;
+  border-radius:9px;
+  font-family:inherit;
+}
+.how{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:15px;
+  padding:65px 0;
+}
+.how-card{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:15px;
+  padding:22px;
+}
+.how-card b{color:var(--blue);font-size:13px}
+.how-card h3{margin:12px 0 6px}
+.how-card p{color:var(--muted);font-size:14px;line-height:1.5;margin:0}
+footer{
+  border-top:1px solid var(--line);
+  background:#fff;
+  padding:28px 24px;
+  text-align:center;
+  color:var(--muted);
+  font-size:13px;
+}
+.hidden{display:none!important}
+@media(max-width:800px){
+  .hero{grid-template-columns:1fr;padding:55px 0 35px;gap:30px}
+  .hero h1{font-size:42px}
+  .profile-grid,.how{grid-template-columns:1fr 1fr}
+}
+@media(max-width:560px){
+  header{padding:0 18px}
+  main{padding:0 15px}
+  .hero h1{font-size:36px}
+  .section-card{padding:22px}
+  .profile-grid,.how{grid-template-columns:1fr}
+  .job{grid-template-columns:1fr}
+  .job>strong{text-align:left}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="logo">JobHunter <span>AI</span></div>
+  <a href="#how">How it works</a>
+</header>
+
+<main>
+
+<section class="hero">
+  <div>
+    <div class="eyebrow">AI-POWERED JOB SEARCH</div>
+    <h1>Find better jobs.<br><span>Apply with confidence.</span></h1>
+    <p>
+      Upload your CV once. JobHunter AI checks your profile,
+      finds relevant opportunities and helps you prepare stronger,
+      truthful applications.
+    </p>
+
+    <div class="hero-points">
+      <span><b>✓</b> CV profile check</span>
+      <span><b>✓</b> Smart job matching</span>
+      <span><b>✓</b> Personalized applications</span>
+    </div>
+  </div>
+
+  <div class="upload-preview">
+    <div class="preview-top">
+      <div class="preview-title">Your AI job search</div>
+      <div class="badge">AI POWERED</div>
+    </div>
+
+    <div class="preview-box">
+      <div class="file-icon">CV</div>
+      <h3>Start with your CV</h3>
+      <p>PDF, DOCX or TXT · Maximum 8 MB</p>
+    </div>
+  </div>
+</section>
+
+<section class="section-card" id="start">
+  <div class="step-label">STEP 01</div>
+  <h2>Upload your CV</h2>
+  <p>We'll check that your essential information and work experience are complete.</p>
+
+  <div class="upload-area">
+    <form id="cvForm">
+      <input type="file" name="cv" accept=".pdf,.docx,.txt" required>
+      <button class="btn" type="submit">Analyze my CV →</button>
+    </form>
+    <div id="status"></div>
+  </div>
+</section>
+
+<section class="section-card hidden" id="profile">
+  <div class="step-label">STEP 02</div>
+  <h2>Complete your profile</h2>
+  <p id="intro"></p>
+
+  <div id="missing"></div>
+
+  <div class="profile-grid">
+    <div class="info-box" id="summary">
+      Your profile information will appear here.
+    </div>
+
+    <div class="info-box">
+      <strong>Where should we search?</strong>
+      <label>
+        Location
+        <select id="location">
+          <option value="">Worldwide</option>
+          <option>Singapore</option>
+          <option>Philippines</option>
+          <option>Thailand</option>
+          <option>Malaysia</option>
+          <option>Australia</option>
+          <option>Germany</option>
+          <option>United Kingdom</option>
+          <option>United States</option>
+          <option>Norway</option>
+        </select>
+      </label>
+
+      <label class="check">
+        <input id="remote" type="checkbox" checked>
+        Include remote jobs
+      </label>
+    </div>
+  </div>
+
+  <button id="hunt" class="btn">Find matching jobs →</button>
+</section>
+
+<section class="hidden" id="results">
+  <div class="resultsTitle">
+    <h2>Recommended jobs</h2>
+    <span id="count"></span>
+  </div>
+
+  <div id="jobs"></div>
+</section>
+
+<section class="how" id="how">
+
+  <div class="how-card">
+    <b>01</b>
+    <h3>Upload your CV</h3>
+    <p>AI extracts your professional profile and checks the essentials.</p>
+  </div>
+
+  <div class="how-card">
+    <b>02</b>
+    <h3>Complete your profile</h3>
+    <p>Fix missing information before you start applying.</p>
+  </div>
+
+  <div class="how-card">
+    <b>03</b>
+    <h3>Find matching jobs</h3>
+    <p>JobHunter searches public opportunities that fit your profile.</p>
+  </div>
+
+  <div class="how-card">
+    <b>04</b>
+    <h3>Prepare applications</h3>
+    <p>Generate a personalized, truthful application for each opportunity.</p>
+  </div>
+
+</section>
+
+</main>
+
+<footer>
+  JobHunter AI · Your AI-powered job search assistant
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
