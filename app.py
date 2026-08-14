@@ -128,4 +128,10 @@ def feedback():
  except Exception as e: return jsonify(error=str(e)),400
 @app.errorhandler(413)
 def too_large(_): return jsonify(error='CV is too large. Maximum 8 MB.'),413
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+ app.logger.exception('Unhandled application error')
+ if request.path.startswith('/api/'):
+  return jsonify(error=f'Server error: {type(e).__name__}'),500
+ return e
 if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.getenv('PORT','5000')))
