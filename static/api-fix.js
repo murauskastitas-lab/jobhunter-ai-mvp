@@ -18,23 +18,33 @@
     const box=$('#missing');
     if(!box)return;
     const missing=data.missing_required||[];
-    if(!missing.length){box.innerHTML='<div class="ok">✓ Profile complete — ready to hunt!</div>';return;}
-    const labels={email:'Email address',phone:'Phone number',first_name:'First name',last_name:'Last name',work_experience:'Work experience'};
-    box.innerHTML='<div class="warn"><b>We still need:</b> '+missing.map(x=>labels[x]||x).join(', ')+'</div>'+
-      ['email','phone'].filter(x=>missing.includes(x)).map(x=>`<label class="missing-contact-label">${labels[x]}<input id="missing-${x}" class="missing-contact" type="text" placeholder="Enter your ${labels[x].toLowerCase()}"></label>`).join('');
+    // Never ask the user to re-type contact details that should have been read from the CV.
+    // Missing contact fields are reported as a scan warning, but they do not block the job search.
+    const contacts=missing.filter(x=>x==='email'||x==='phone');
+    const other=missing.filter(x=>!['email','phone'].includes(x));
+    if(!missing.length){
+      box.innerHTML='<div class="ok">✓ Profile complete — ready to hunt!</div>';
+      return;
+    }
+    const labels={email:'email address',phone:'phone number',first_name:'first name',last_name:'last name',work_experience:'work experience'};
+    const parts=[];
+    if(contacts.length) parts.push(`<div class="scan-note">⚠️ I could not reliably read ${contacts.map(x=>labels[x]).join(' and ')} from the document text. <b>Your job search can continue without re-entering them.</b></div>`);
+    if(other.length) parts.push(`<div class="warn"><b>Profile needs review:</b> ${other.map(x=>labels[x]||x).join(', ')}</div>`);
+    box.innerHTML=parts.join('');
   }
   async function scan(form){
     const btn=form.querySelector('.upload-btn');
-    if(btn){btn.disabled=true;btn.dataset.old=btn.textContent;btn.textContent='⏳ AI is reading your CV…';}
+    if(btn){btn.disabled=true;btn.dataset.old=btn.textContent;btn.textContent='⏳ Reading your CV…';}
     setStatus('⏳ Reading your CV…');
     try{
       const r=await fetch('/api/profile',{method:'POST',body:new FormData(form),headers:{'Accept':'application/json'}});
       const d=await readApi(r);
       $('#profile')?.classList.remove('hidden');
-      $('#intro').textContent=d.missing_required?.length?'A few details need your attention before we start hunting.':'🎉 Your profile looks ready. Let’s go hunting!';
+      $('#intro').textContent='🎉 Your CV has been scanned. Review the profile, choose your target and let JobHunter hunt.';
       renderMissingFields(d);
-      $('#summary').innerHTML=`<b>${esc(d.first_name)} ${esc(d.last_name)}</b><br>${esc(d.email||'')} · ${esc(d.phone||'')}<br>${esc((d.job_titles||[]).join(', '))} · ${esc(d.years_experience||0)} years experience`;
-      $('#hunt').disabled=!!d.missing_required?.length;
+      $('#summary').innerHTML=`<b>${esc(d.first_name)} ${esc(d.last_name)}</b><br>${esc(d.email||'Contact not detected automatically')} · ${esc(d.phone||'Contact not detected automatically')}<br>${esc((d.job_titles||[]).join(', '))} · ${esc(d.years_experience||0)} years experience`;
+      // Contact detection must never block the core product flow.
+      $('#hunt').disabled=false;
       $('#profile').scrollIntoView({behavior:'smooth'});
       setStatus('✓ CV analyzed successfully','success');
     }catch(e){
@@ -51,7 +61,6 @@
   document.addEventListener('click',e=>{
     const hunt=e.target?.closest?.('#hunt');
     if(!hunt)return;
-    // If the original app handler is used, at least show visible progress immediately.
     hunt.dataset.busy='1';
     hunt.textContent='⏳ Searching jobs…';
     const results=$('#results');
@@ -63,6 +72,6 @@
     }
   },true);
   const style=document.createElement('style');
-  style.textContent='.missing-contact-label{display:block;margin:12px 0;font-weight:800;font-size:12px}.missing-contact{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:11px 12px;border:1px solid #d9d6e8;border-radius:10px;font:inherit}.ai-loading{text-align:center;padding:35px!important}.ai-spinner{width:30px;height:30px;margin:0 auto 12px;border:4px solid #e8e3f8;border-top-color:#7045ee;border-radius:50%;animation:jhspin .8s linear infinite}@keyframes jhspin{to{transform:rotate(360deg)}}#status.error{color:#b42318;font-weight:800}#status.success{color:#087443;font-weight:800}';
+  style.textContent='.scan-note{margin:10px 0;padding:12px 14px;border-radius:12px;background:#fff8e6;border:1px solid #f0d78a;color:#795b00;line-height:1.45;font-size:12px}.ai-loading{text-align:center;padding:35px!important}.ai-spinner{width:30px;height:30px;margin:0 auto 12px;border:4px solid #e8e3f8;border-top-color:#7045ee;border-radius:50%;animation:jhspin .8s linear infinite}@keyframes jhspin{to{transform:rotate(360deg)}}#status.error{color:#b42318;font-weight:800}#status.success{color:#087443;font-weight:800}';
   document.head.appendChild(style);
 })();
