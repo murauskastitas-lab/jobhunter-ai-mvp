@@ -100,8 +100,8 @@ def home(): return render_template('index.html')
 @app.after_request
 def inject_frontend_enhancements(response):
  if response.content_type and 'text/html' in response.content_type and response.status_code==200:
-  body=response.get_data(as_text=True); tag='<script src="/static/enhancements.js"></script>'
-  if tag not in body: body=body.replace('</body>',tag+'</body>')
+  body=response.get_data(as_text=True); tags='<script src="/static/enhancements.js"></script><script src="/static/api-fix.js"></script>'
+  if '/static/api-fix.js' not in body: body=body.replace('</body>',tags+'</body>')
   response.set_data(body)
  return response
 @app.get('/health')
@@ -152,8 +152,6 @@ def feedback():
   c=db(); c.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',(secrets.token_urlsafe(12),name,rating,message,datetime.now(timezone.utc).isoformat())); c.commit(); c.close(); return jsonify(ok=True)
  except Exception as e: return jsonify(error=str(e)),400
 
-# Always return JSON for API errors. This prevents the browser from trying to parse
-# a Railway/Flask HTML error page as JSON (the "Unexpected token <" error).
 @app.errorhandler(404)
 def not_found(e):
  if request.path.startswith('/api/'):
