@@ -31,9 +31,39 @@ def ai_json(instructions,prompt):
  if not client: raise RuntimeError('OPENAI_API_KEY is not configured in Railway Variables.')
  r=client.responses.create(model=OPENAI_MODEL,instructions=instructions,input=prompt,text={'format':{'type':'json_object'}},store=False); return json.loads(r.output_text)
 
+def detect_contacts(cv_text):
+ email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',cv_text or '')
+ email=email_match.group(0).strip() if email_match else ''
+ phone=''
+ for candidate in re.findall(r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)',cv_text or ''):
+  digits=re.sub(r'\D','',candidate)
+  if 8 <= len(digits) <= 15:
+   phone=re.sub(r'\s+',' ',candidate).strip(' -')
+   break
+ return email,phone
+
 def parse_profile(cv_text):
  shape={'first_name':'','last_name':'','email':'','phone':'','location':'','job_titles':[],'years_experience':0,'skills':[],'languages':[],'education':[],'work_experience':[],'missing_required':[],'profile_ready':False}
- return ai_json('You are a careful CV parser. Use only facts supported by the CV.',f'''Extract a truthful candidate profile. Never invent information. Required: first_name, last_name, email, phone, and at least one work_experience item. Missing/unclear required fields go in missing_required. Set profile_ready=true only when complete. Return JSON exactly like this: {json.dumps(shape)}\n\nCV:\n{cv_text}''')
+ detected_email,detected_phone=detect_contacts(cv_text)
+ p=ai_json('You are a careful CV parser. Use only facts supported by the CV. IMPORTANT: if the system-detected email or phone is provided and non-empty, preserve it exactly and NEVER mark that field missing.',f'''Extract a truthful candidate profile. Never invent information.
+System-detected contact information:
+email={detected_email or 'NOT FOUND'}
+phone={detected_phone or 'NOT FOUND'}
+If either value is present above, use it exactly. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if it is genuinely absent or unreadable.
+Return JSON exactly like this: {json.dumps(shape)}
+
+CV:\n{cv_text}''')
+ p['email']=detected_email or str(p.get('email') or '').strip()
+ p['phone']=detected_phone or str(p.get('phone') or '').strip()
+ missing=[x for x in (p.get('missing_required') or []) if x not in ('email','phone')]
+ if not p['email']: missing.append('email')
+ if not p['phone']: missing.append('phone')
+ if not p.get('first_name'): missing.append('first_name')
+ if not p.get('last_name'): missing.append('last_name')
+ if not p.get('work_experience'): missing.append('work_experience')
+ p['missing_required']=list(dict.fromkeys(missing))
+ p['profile_ready']=not bool(p['missing_required'])
+ return p
 
 def fetch_json(url):
  req=urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0'}); 
@@ -73,8 +103,7 @@ def home(): return render_template('index.html')
 @app.after_request
 def inject_frontend_enhancements(response):
  if response.content_type and 'text/html' in response.content_type and response.status_code==200:
-  body=response.get_data(as_text=True)
-  tag='<script src="/static/enhancements.js"></script>'
+  body=response.get_data(as_text=True); tag='<script src="/static/enhancements.js"></script>'
   if tag not in body: body=body.replace('</body>',tag+'</body>')
   response.set_data(body)
  return response
@@ -131,7 +160,6 @@ def too_large(_): return jsonify(error='CV is too large. Maximum 8 MB.'),413
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
  app.logger.exception('Unhandled application error')
- if request.path.startswith('/api/'):
-  return jsonify(error=f'Server error: {type(e).__name__}'),500
+ if request.path.startswith('/api/'): return jsonify(error=f'Server error: {type(e).__name__}'),500
  return e
 if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.getenv('PORT','5000')))
