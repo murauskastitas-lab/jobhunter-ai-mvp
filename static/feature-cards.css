@@ -1,0 +1,22 @@
+/* Interactive feature cards — polished flip UI */
+.about-grid{align-items:stretch}
+.flip-card{display:block;width:100%;height:260px;min-height:260px;border:0;background:transparent;padding:0;perspective:1400px;cursor:pointer;font-family:inherit;text-align:left;position:relative;outline:none}
+.flip-inner{display:block;position:relative;width:100%;height:100%;transition:transform .72s cubic-bezier(.22,.75,.2,1);transform-style:preserve-3d}
+.flip-card.flipped .flip-inner{transform:rotateY(180deg)}
+.flip-front,.flip-back{position:absolute;inset:0;width:100%;height:100%;border-radius:24px;padding:26px;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;backface-visibility:hidden;-webkit-backface-visibility:hidden;overflow:hidden}
+.flip-front{background:linear-gradient(145deg,#fff 0%,#f8f5ff 100%);border:1px solid #e5e0f2;box-shadow:0 12px 35px rgba(54,46,110,.07);transition:box-shadow .25s,transform .25s}
+.flip-front:before{content:"";position:absolute;width:120px;height:120px;border-radius:50%;right:-45px;top:-45px;background:linear-gradient(135deg,rgba(113,60,255,.13),rgba(0,193,232,.12));pointer-events:none}
+.flip-front:after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;background:linear-gradient(90deg,#6d42ff,#f32a9f,#00bde8);opacity:.85}
+.flip-front>b:first-child{font-size:38px;line-height:1;margin:0 0 18px;display:block;position:relative;z-index:1}
+.flip-front>b:nth-of-type(1){font-size:17px;margin:0}
+.flip-front>small{font-size:13px;color:#69708b;line-height:1.55;margin-top:9px;max-width:235px}
+.flip-front>em{font-style:normal;font-size:10px;color:#6b42e8;font-weight:900;margin-top:auto;letter-spacing:.02em}
+.flip-back{background:linear-gradient(145deg,#6339ed 0%,#b53fe5 52%,#f42b9c 100%);color:#fff;transform:rotateY(180deg);box-shadow:0 18px 45px rgba(93,53,195,.24)}
+.flip-back:before{content:"✦";position:absolute;right:20px;top:12px;font-size:42px;opacity:.18}
+.flip-back>b{margin:0;font-size:20px;letter-spacing:-.02em}
+.flip-back small{margin-top:14px;line-height:1.65;font-size:13px;color:rgba(255,255,255,.94)}
+.flip-back:after{content:"Click again to flip back ↻";margin-top:auto;font-size:10px;font-weight:900;color:rgba(255,255,255,.78)}
+.flip-card:hover .flip-front{box-shadow:0 20px 45px rgba(83,54,180,.15);transform:translateY(-4px)}
+.flip-card:focus-visible{outline:3px solid #9b83ff;outline-offset:5px;border-radius:24px}
+@media(max-width:850px){.flip-card{height:245px;min-height:245px}.flip-front,.flip-back{padding:22px}}
+@media(max-width:520px){.flip-card{height:230px;min-height:230px}.flip-front,.flip-back{padding:20px}.flip-front>b:first-child{font-size:32px}.flip-back small{font-size:12px}}
