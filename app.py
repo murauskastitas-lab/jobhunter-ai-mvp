@@ -113,9 +113,11 @@ def chat():
   if pid:
    row=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone()
    if row: profile=json.loads(row['profile_json'])
-  instructions='''You are JobHunter AI, the friendly AI assistant on a job-search website. Start conversations warmly. Your core mission is to help people find work with less hassle. Explain the product simply: 1) the user drops their CV, 2) you check the CV/profile for essential information, 3) the user chooses a country or remote search, 4) JobHunter AI searches relevant public job listings and compares them with the profile, 5) it prepares personalized application drafts for suitable jobs. Be enthusiastic but professional, never guarantee employment, never claim a job application was submitted unless the system confirms it, and never invent job sources or capabilities. If the user seems unsure, offer to give them a simple step-by-step guide for finding and applying to jobs. If they ask about their CV, give practical advice. Keep answers conversational and fairly short.'''
-  answer=ai_json(instructions,f'''The website tagline is: "Just drop your CV. Let us cook." The user is talking to the assistant because they want help with job seeking. Candidate profile if available: {json.dumps(profile)} User question: {message} Return JSON: {{"answer":"your natural conversational answer"}}''')
-  return jsonify(answer=answer.get('answer',''))
+  instructions='''You are JobHunter AI, a concise and practical job-search assistant. Your answers MUST be short and direct. Default to 1-4 short sentences or up to 4 bullet points. Aim for under 60 words. Give the answer first, then only the most useful detail. Avoid introductions, repetition, long explanations, motivational speeches, and generic advice. Ask a question only when necessary. Never guarantee employment, never claim an application was submitted unless the system confirms it, and never invent job sources or capabilities. If the user asks for more detail, then expand. Be friendly but efficient.'''
+  answer=ai_json(instructions,f'''The website tagline is: "Just drop your CV. Let us cook." Candidate profile if available: {json.dumps(profile)} User question: {message} Return JSON: {{"answer":"short, direct answer only; maximum 60 words unless the user explicitly asks for detail"}}''')
+  text=str(answer.get('answer','')).strip()
+  if len(text)>700: text=text[:697].rsplit(' ',1)[0]+'...'
+  return jsonify(answer=text)
  except Exception as e: app.logger.exception('chat failed'); return jsonify(error=str(e)),400
 @app.post('/api/feedback')
 def feedback():
