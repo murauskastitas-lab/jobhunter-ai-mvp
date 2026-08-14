@@ -32,27 +32,31 @@ def ai_json(instructions,prompt):
  r=client.responses.create(model=OPENAI_MODEL,instructions=instructions,input=prompt,text={'format':{'type':'json_object'}},store=False); return json.loads(r.output_text)
 
 def detect_contacts(cv_text):
- email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',cv_text or '')
+ text=cv_text or ''
+ email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',text)
  email=email_match.group(0).strip() if email_match else ''
  phone=''
- for candidate in re.findall(r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)',cv_text or ''):
-  digits=re.sub(r'\D','',candidate)
-  if 8 <= len(digits) <= 15:
+ # Prefer numbers on lines explicitly labelled Phone/Tel/Mobile. This avoids dates being mistaken for phone numbers.
+ lines=text.splitlines()
+ labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]
+ sources=labeled+[line for line in lines if line not in labeled]
+ pattern=r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)'
+ for line in sources:
+  for candidate in re.findall(pattern,line):
+   digits=re.sub(r'\D','',candidate)
+   compact=re.sub(r'\D','',candidate)
+   if not (8 <= len(digits) <= 15): continue
+   if re.fullmatch(r'20\d{2}[01]\d[0-3]\d',compact) or re.fullmatch(r'\d{4}[-./]\d{1,2}[-./]\d{1,2}',candidate.strip()): continue
+   if re.search(r'(?i)\b(19|20)\d{2}\s*[-–]\s*(19|20)\d{2}\b',line): continue
    phone=re.sub(r'\s+',' ',candidate).strip(' -')
    break
+  if phone: break
  return email,phone
 
 def parse_profile(cv_text):
  shape={'first_name':'','last_name':'','email':'','phone':'','location':'','job_titles':[],'years_experience':0,'skills':[],'languages':[],'education':[],'work_experience':[],'missing_required':[],'profile_ready':False}
  detected_email,detected_phone=detect_contacts(cv_text)
- p=ai_json('You are a careful CV parser. Use only facts supported by the CV. IMPORTANT: if the system-detected email or phone is provided and non-empty, preserve it exactly and NEVER mark that field missing.',f'''Extract a truthful candidate profile. Never invent information.
-System-detected contact information:
-email={detected_email or 'NOT FOUND'}
-phone={detected_phone or 'NOT FOUND'}
-If either value is present above, use it exactly. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if it is genuinely absent or unreadable.
-Return JSON exactly like this: {json.dumps(shape)}
-
-CV:\n{cv_text}''')
+ p=ai_json('You are a careful CV parser. Use only facts supported by the CV. IMPORTANT: if the system-detected email or phone is provided and non-empty, preserve it exactly and NEVER mark that field missing.',f'''Extract a truthful candidate profile. Never invent information.\nSystem-detected contact information:\nemail={detected_email or 'NOT FOUND'}\nphone={detected_phone or 'NOT FOUND'}\nIf either value is present above, use it exactly. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if it is genuinely absent or unreadable.\nReturn JSON exactly like this: {json.dumps(shape)}\n\nCV:\n{cv_text}''')
  p['email']=detected_email or str(p.get('email') or '').strip()
  p['phone']=detected_phone or str(p.get('phone') or '').strip()
  missing=[x for x in (p.get('missing_required') or []) if x not in ('email','phone')]
@@ -61,8 +65,7 @@ CV:\n{cv_text}''')
  if not p.get('first_name'): missing.append('first_name')
  if not p.get('last_name'): missing.append('last_name')
  if not p.get('work_experience'): missing.append('work_experience')
- p['missing_required']=list(dict.fromkeys(missing))
- p['profile_ready']=not bool(p['missing_required'])
+ p['missing_required']=list(dict.fromkeys(missing)); p['profile_ready']=not bool(p['missing_required'])
  return p
 
 def fetch_json(url):
@@ -99,7 +102,6 @@ def application_draft(profile,job): return ai_json('You write concise profession
 
 @app.get('/')
 def home(): return render_template('index.html')
-
 @app.after_request
 def inject_frontend_enhancements(response):
  if response.content_type and 'text/html' in response.content_type and response.status_code==200:
@@ -107,7 +109,6 @@ def inject_frontend_enhancements(response):
   if tag not in body: body=body.replace('</body>',tag+'</body>')
   response.set_data(body)
  return response
-
 @app.get('/health')
 def health(): return jsonify(status='ok',service='jobhunter-ai')
 @app.post('/api/profile')
