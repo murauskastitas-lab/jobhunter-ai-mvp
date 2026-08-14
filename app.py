@@ -100,8 +100,9 @@ def home(): return render_template('index.html')
 @app.after_request
 def inject_frontend_enhancements(response):
  if response.content_type and 'text/html' in response.content_type and response.status_code==200:
-  body=response.get_data(as_text=True); tags='<script src="/static/enhancements.js"></script><script src="/static/api-fix.js"></script>'
+  body=response.get_data(as_text=True); tags='<script src="/static/enhancements.js"></script><script src="/static/api-fix.js"></script><script src="/static/loading.js"></script>'
   if '/static/api-fix.js' not in body: body=body.replace('</body>',tags+'</body>')
+  elif '/static/loading.js' not in body: body=body.replace('</body>','<script src="/static/loading.js"></script></body>')
   response.set_data(body)
  return response
 @app.get('/health')
