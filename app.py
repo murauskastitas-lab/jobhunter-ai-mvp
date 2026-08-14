@@ -55,45 +55,67 @@ def local_profile(text,email,phone):
   if 2<=len(parts)<=4 and all(len(p)>1 for p in parts) and not re.search(r'(?i)cv|resume|curriculum|email|phone|linkedin|profile|experience',clean): first,last=parts[0],parts[-1]; break
  exp=[x[:180] for x in lines if re.search(r'(?i)\b(20\d{2}|19\d{2})\b',x) and (re.search(r'(?i)experience|work|employment|present|current',x) or re.search(r'[-–—]',x))]
  years_found=[int(x) for x in re.findall(r'(?<!\d)(?:19|20)(\d{2})(?!\d)',text)]; years=max(0,min(40,datetime.now().year-min(1900+y if y<30 else 2000+y for y in years_found))) if years_found else 0
- titles=[x for x in lines if re.search(r'(?i)\b(manager|analyst|specialist|engineer|developer|consultant|agent|support|assistant|coordinator|administrator|technician|designer|sales|customer service|service desk)\b',x) and len(x)<100]
+ titles=[x for x in lines if re.search(r'(?i)\b(manager|analyst|specialist|engineer|developer|consultant|agent|support|assistant|coordinator|administrator|technician|designer|sales|customer service|service desk|help desk|desktop support)\b',x) and len(x)<100]
  return {'first_name':first,'last_name':last,'email':email,'phone':phone,'location':'','job_titles':list(dict.fromkeys(titles))[:10],'years_experience':years,'skills':[],'languages':[],'education':[],'work_experience':exp[:8],'missing_required':[],'profile_ready':False}
 def parse_profile(text):
  e,p=detect_contacts(text); x=local_profile(text,e,p); x['missing_required']=[k for k,v in [('email',e),('phone',p),('first_name',x['first_name']),('last_name',x['last_name'])] if not v]+(['work_experience'] if not x['work_experience'] else []); x['profile_ready']=not x['missing_required']; return x
 def fetch_json(url):
- with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0'}),timeout=8,context=ssl.create_default_context()) as r:return json.loads(r.read().decode('utf-8',errors='ignore'))
+ with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0','Accept':'application/json'}),timeout=10,context=ssl.create_default_context()) as r:return json.loads(r.read().decode('utf-8',errors='ignore'))
+COUNTRY_TERMS={'lithuania':['lithuania','vilnius','kaunas','klaipeda','siauliai','panevezys','šiauliai','panevėžys'],'philippines':['philippines','manila','taguig','cebu','makati','quezon city','pasig','davao'],'germany':['germany','berlin','munich','hamburg','frankfurt','cologne'],'norway':['norway','oslo','bergen','stavanger','trondheim'],'thailand':['thailand','bangkok','chiang mai','phuket','pattaya'],'united kingdom':['united kingdom','uk','london','manchester','birmingham','edinburgh'],'usa':['usa','united states','new york','california','texas','florida']}
+COUNTRY_CODE={'lithuania':'lt','germany':'de','norway':'no','thailand':'th','philippines':'ph','united kingdom':'gb','usa':'us'}
 def discover_jobs(location,remote,titles):
- jobs=[]; loc=(location or '').strip().lower(); aliases={'lithuania':['lithuania','vilnius','kaunas','klaipeda','siauliai','panevezys'],'philippines':['philippines','manila','taguig','cebu','makati','quezon city'],'germany':['germany','berlin','munich','hamburg','frankfurt'],'norway':['norway','oslo','bergen','stavanger'],'thailand':['thailand','bangkok','chiang mai','phuket']}
- loc_terms=aliases.get(loc,[loc] if loc else [])
+ jobs=[]; loc=(location or '').strip().lower(); terms=COUNTRY_TERMS.get(loc,[loc] if loc else [])
+ # 1) European/public aggregator: collect broadly; exact CV title is NEVER a hard filter.
  try:
   data=fetch_json('https://www.arbeitnow.com/api/job-board-api')
   for j in data.get('data',[]):
-   hay=' '.join(str(j.get(k,'')) for k in ['title','description','company_name','location']).lower()
-   # Location filters only. Never require an exact CV title before returning a job.
-   if loc and not remote and loc_terms and not any(t in hay for t in loc_terms): continue
+   hay=' '.join(str(j.get(k,'')) for k in ['title','description','company_name','location','tags']).lower()
+   if loc and not remote and terms and not any(t in hay for t in terms): continue
+   if remote and not (j.get('remote') or 'remote' in hay): continue
    jobs.append({'title':j.get('title',''),'company':j.get('company_name',''),'location':j.get('location',''),'url':j.get('url',''),'source':'Arbeitnow'})
  except Exception as e: app.logger.warning('Arbeitnow failed: %s',e)
+ # 2) Remotive: use broad remote feed. Its public API is explicitly a remote-jobs feed.
  if remote:
   try:
    data=fetch_json('https://remotive.com/api/remote-jobs')
    for j in data.get('jobs',[]):
     hay=' '.join(str(j.get(k,'')) for k in ['title','description','company_name','candidate_required_location']).lower(); req=str(j.get('candidate_required_location','')).lower()
-    if loc and loc!='worldwide' and loc_terms and not any(t in hay or t in req for t in loc_terms): continue
+    if loc and loc!='worldwide' and terms and not any(t in hay or t in req for t in terms): continue
     jobs.append({'title':j.get('title',''),'company':j.get('company_name',''),'location':j.get('candidate_required_location','Remote'),'url':j.get('url',''),'source':'Remotive'})
   except Exception as e: app.logger.warning('Remotive failed: %s',e)
+  # 3) Jobicy: up to 100 remote listings per request, with region support.
+  try:
+   geo=COUNTRY_CODE.get(loc,'')
+   url='https://jobicy.com/api/v2/remote-jobs?count=100'+(('&geo='+geo) if geo else '')
+   data=fetch_json(url)
+   for j in data.get('jobs',[]):
+    jobs.append({'title':j.get('jobTitle',''),'company':j.get('companyName',''),'location':j.get('jobGeo','Remote'),'url':j.get('url',''),'source':'Jobicy'})
+  except Exception as e: app.logger.warning('Jobicy failed: %s',e)
+ # 4) Adzuna, if user has configured credentials. This adds a much larger country-specific inventory.
+ app_id=os.getenv('ADZUNA_APP_ID',''); app_key=os.getenv('ADZUNA_APP_KEY',''); code=COUNTRY_CODE.get(loc,'')
+ if app_id and app_key and code:
+  try:
+   for page in range(1,4):
+    url=f'https://api.adzuna.com/v1/api/jobs/{code}/search/{page}?app_id={urllib.parse.quote(app_id)}&app_key={urllib.parse.quote(app_key)}&results_per_page=50&content-type=application/json'
+    data=fetch_json(url)
+    for j in data.get('results',[]): jobs.append({'title':j.get('title',''),'company':(j.get('company') or {}).get('display_name',''),'location':(j.get('location') or {}).get('display_name',''),'url':j.get('redirect_url',''),'source':'Adzuna'})
+    if len(data.get('results',[]))<50: break
+  except Exception as e: app.logger.warning('Adzuna failed: %s',e)
+ # Deduplicate across every source, retaining the first canonical URL.
  seen=set(); out=[]
  for j in jobs:
-  k=(j['title'].lower(),j['company'].lower(),j['url'])
-  if k not in seen: seen.add(k); out.append(j)
- return out[:60]
+  title=re.sub(r'\s+',' ',j['title']).strip(); company=re.sub(r'\s+',' ',j['company']).strip(); url=j.get('url','').strip(); key=(re.sub(r'\W','',title.lower()),re.sub(r'\W','',company.lower()))
+  if url: key+=(url.split('?')[0],)
+  if title and key not in seen: seen.add(key); j['title']=title; j['company']=company; out.append(j)
+ return out[:500]
 def match_jobs(profile,jobs):
  if not jobs:return []
  compact=[{'index':i,'title':j['title'],'company':j['company'],'location':j['location'],'source':j['source']} for i,j in enumerate(jobs)]
  try:
-  result=ai_json('You are a conservative recruitment matching engine. Never invent qualifications. Keep each reason under 16 words.',f'Candidate: {json.dumps(profile)} Jobs: {json.dumps(compact)} Return JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.')
+  result=ai_json('You are a conservative recruitment matching engine. Never invent qualifications. Score relevance, not exact title equality. Keep each reason under 16 words.',f'Candidate: {json.dumps(profile)} Jobs: {json.dumps(compact)} Return JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.')
   matches={int(x.get('index')):x for x in result.get('matches',[]) if str(x.get('index','')).isdigit()}
  except Exception: matches={}
  return [{'job':j,'score':max(0,min(100,int(matches.get(i,{}).get('score',0) or 0))),'reason':str(matches.get(i,{}).get('reason','Review this job against your CV.'))[:240]} for i,j in enumerate(jobs)]
-
 def application_draft(profile,job): return ai_json('You write concise professional job applications using only supported facts.',f'Create a short truthful application email. Candidate: {json.dumps(profile)} Job: {json.dumps(job)} Return JSON: {{"subject":"","body":""}}')
 @app.get('/')
 def home(): return render_template('index.html')
@@ -117,11 +139,11 @@ def search():
   pid=session.get('profile_id'); c=db(); row=c.execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone() if pid else None
   if not row: c.close(); return jsonify(error='Upload your CV first.'),400
   p=json.loads(row['profile_json']); location=request.form.get('location','').strip(); remote=request.form.get('remote')=='true'; jobs=discover_jobs(location,remote,p.get('job_titles',[]))
-  if not jobs: c.close(); return jsonify(opportunities=[],count=0,message='No public listings were returned for this location. Try Remote or another country.')
+  if not jobs: c.close(); return jsonify(opportunities=[],count=0,message='No public listings were returned. Try enabling Remote or another country.')
   matches=match_jobs(p,jobs); out=[]
   for item in matches:
    j=item['job']; oid=secrets.token_urlsafe(16); c.execute('INSERT INTO opportunities VALUES (?,?,?,?,?,?,?,?,?,?)',(oid,pid,j['title'],j['company'],j['location'],j['url'],j['source'],item['score'],item['reason'],datetime.now(timezone.utc).isoformat())); out.append({'id':oid,**j,'score':item['score'],'reason':item['reason']})
-  c.commit(); c.close(); out.sort(key=lambda x:x['score'],reverse=True); return jsonify(opportunities=out[:30],count=len(out))
+  c.commit(); c.close(); out.sort(key=lambda x:x['score'],reverse=True); return jsonify(opportunities=out[:50],count=len(out),sources=sorted(set(x['source'] for x in out)))
  except Exception as e: app.logger.exception('search failed'); return jsonify(error=str(e)),500
 @app.post('/api/draft')
 def draft():
@@ -141,12 +163,14 @@ def chat():
 @app.post('/api/feedback')
 def feedback():
  try:
-  name=request.form.get('name','')[:80]; msg=request.form.get('message','')[:1000]; rating=max(1,min(5,int(request.form.get('rating','5'))));
+  name=request.form.get('name','')[:80]; msg=request.form.get('message','')[:1000]; rating=max(1,min(5,int(request.form.get('rating','5'))))
   if not msg:return jsonify(error='Please write a short message.'),400
   c=db(); c.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',(secrets.token_urlsafe(12),name,rating,msg,datetime.now(timezone.utc).isoformat())); c.commit(); c.close(); return jsonify(ok=True)
  except Exception as e:return jsonify(error=str(e)),400
 @app.errorhandler(404)
-def not_found(e): return jsonify(error='Not found'),404 if request.path.startswith('/api/') else render_template('index.html')
+def not_found(e):
+ if request.path.startswith('/api/'): return jsonify(error='Not found'),404
+ return render_template('index.html'),404
 @app.errorhandler(413)
 def too_large(e): return jsonify(error='CV is too large. Maximum size is 8 MB.'),413
 if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.getenv('PORT','5000')))
