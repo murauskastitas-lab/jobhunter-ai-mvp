@@ -36,20 +36,17 @@ def detect_contacts(cv_text):
  email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',text)
  email=email_match.group(0).strip() if email_match else ''
  phone=''
- # Prefer numbers on lines explicitly labelled Phone/Tel/Mobile. This avoids dates being mistaken for phone numbers.
  lines=text.splitlines()
  labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]
  sources=labeled+[line for line in lines if line not in labeled]
  pattern=r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)'
  for line in sources:
   for candidate in re.findall(pattern,line):
-   digits=re.sub(r'\D','',candidate)
-   compact=re.sub(r'\D','',candidate)
+   digits=re.sub(r'\D','',candidate); compact=digits
    if not (8 <= len(digits) <= 15): continue
    if re.fullmatch(r'20\d{2}[01]\d[0-3]\d',compact) or re.fullmatch(r'\d{4}[-./]\d{1,2}[-./]\d{1,2}',candidate.strip()): continue
    if re.search(r'(?i)\b(19|20)\d{2}\s*[-–]\s*(19|20)\d{2}\b',line): continue
-   phone=re.sub(r'\s+',' ',candidate).strip(' -')
-   break
+   phone=re.sub(r'\s+',' ',candidate).strip(' -'); break
   if phone: break
  return email,phone
 
@@ -57,16 +54,14 @@ def parse_profile(cv_text):
  shape={'first_name':'','last_name':'','email':'','phone':'','location':'','job_titles':[],'years_experience':0,'skills':[],'languages':[],'education':[],'work_experience':[],'missing_required':[],'profile_ready':False}
  detected_email,detected_phone=detect_contacts(cv_text)
  p=ai_json('You are a careful CV parser. Use only facts supported by the CV. IMPORTANT: if the system-detected email or phone is provided and non-empty, preserve it exactly and NEVER mark that field missing.',f'''Extract a truthful candidate profile. Never invent information.\nSystem-detected contact information:\nemail={detected_email or 'NOT FOUND'}\nphone={detected_phone or 'NOT FOUND'}\nIf either value is present above, use it exactly. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if it is genuinely absent or unreadable.\nReturn JSON exactly like this: {json.dumps(shape)}\n\nCV:\n{cv_text}''')
- p['email']=detected_email or str(p.get('email') or '').strip()
- p['phone']=detected_phone or str(p.get('phone') or '').strip()
+ p['email']=detected_email or str(p.get('email') or '').strip(); p['phone']=detected_phone or str(p.get('phone') or '').strip()
  missing=[x for x in (p.get('missing_required') or []) if x not in ('email','phone')]
  if not p['email']: missing.append('email')
  if not p['phone']: missing.append('phone')
  if not p.get('first_name'): missing.append('first_name')
  if not p.get('last_name'): missing.append('last_name')
  if not p.get('work_experience'): missing.append('work_experience')
- p['missing_required']=list(dict.fromkeys(missing)); p['profile_ready']=not bool(p['missing_required'])
- return p
+ p['missing_required']=list(dict.fromkeys(missing)); p['profile_ready']=not bool(p['missing_required']); return p
 
 def fetch_json(url):
  req=urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0'}); 
@@ -156,11 +151,24 @@ def feedback():
   if not message: return jsonify(error='Please write a short message.'),400
   c=db(); c.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',(secrets.token_urlsafe(12),name,rating,message,datetime.now(timezone.utc).isoformat())); c.commit(); c.close(); return jsonify(ok=True)
  except Exception as e: return jsonify(error=str(e)),400
+
+# Always return JSON for API errors. This prevents the browser from trying to parse
+# a Railway/Flask HTML error page as JSON (the "Unexpected token <" error).
+@app.errorhandler(404)
+def not_found(e):
+ if request.path.startswith('/api/'):
+  return jsonify(error=f'API endpoint not found: {request.path}'),404
+ return e
+@app.errorhandler(405)
+def method_not_allowed(e):
+ if request.path.startswith('/api/'):
+  return jsonify(error=f'Method {request.method} is not allowed for {request.path}'),405
+ return e
 @app.errorhandler(413)
 def too_large(_): return jsonify(error='CV is too large. Maximum 8 MB.'),413
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
  app.logger.exception('Unhandled application error')
- if request.path.startswith('/api/'): return jsonify(error=f'Server error: {type(e).__name__}'),500
+ if request.path.startswith('/api/'): return jsonify(error=f'Server error: {type(e).__name__}: {e}'),500
  return e
 if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.getenv('PORT','5000')))
