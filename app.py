@@ -7,7 +7,8 @@ from pypdf import PdfReader
 from docx import Document
 load_dotenv()
 app=Flask(__name__); app.secret_key=os.getenv('FLASK_SECRET_KEY',secrets.token_hex(32)); app.config['MAX_CONTENT_LENGTH']=8*1024*1024
-DB_PATH=os.getenv('DATABASE_PATH','jobhunter.db'); OPENAI_API_KEY=os.getenv('OPENAI_API_KEY',''); OPENAI_MODEL=os.getenv('OPENAI_MODEL','gpt-5-mini'); client=OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+DB_PATH=os.getenv('DATABASE_PATH','jobhunter.db'); OPENAI_API_KEY=os.getenv('OPENAI_API_KEY',''); OPENAI_MODEL=os.getenv('OPENAI_MODEL','gpt-5-mini')
+client=OpenAI(api_key=OPENAI_API_KEY, timeout=20.0, max_retries=0) if OPENAI_API_KEY else None
 
 def db():
  c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; return c
@@ -29,14 +30,13 @@ def extract_cv(file):
 
 def ai_json(instructions,prompt):
  if not client: raise RuntimeError('OPENAI_API_KEY is not configured in Railway Variables.')
- r=client.responses.create(model=OPENAI_MODEL,instructions=instructions,input=prompt,text={'format':{'type':'json_object'}},store=False); return json.loads(r.output_text)
+ r=client.responses.create(model=OPENAI_MODEL,instructions=instructions,input=prompt,text={'format':{'type':'json_object'}},store=False)
+ return json.loads(r.output_text)
 
 def detect_contacts(cv_text):
  text=cv_text or ''
- email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',text)
- email=email_match.group(0).strip() if email_match else ''
- phone=''
- lines=text.splitlines(); labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]; sources=labeled+[line for line in lines if line not in labeled]
+ email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',text); email=email_match.group(0).strip() if email_match else ''
+ phone=''; lines=text.splitlines(); labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]; sources=labeled+[line for line in lines if line not in labeled]
  pattern=r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)'
  for line in sources:
   for candidate in re.findall(pattern,line):
@@ -48,10 +48,37 @@ def detect_contacts(cv_text):
   if phone: break
  return email,phone
 
+def local_profile(cv_text,detected_email,detected_phone):
+ lines=[re.sub(r'\s+',' ',x).strip() for x in cv_text.splitlines() if x.strip()]
+ first_name=''; last_name=''
+ for line in lines[:12]:
+  clean=re.sub(r'[^A-Za-zÀ-ž'"'’\- ]','',line).strip()
+  parts=clean.split()
+  if 2 <= len(parts) <= 4 and all(len(p)>1 for p in parts) and not re.search(r'(?i)cv|resume|curriculum|email|phone|linkedin|profile|experience',clean):
+   first_name,last_name=parts[0],parts[-1]; break
+ exp=[]
+ for i,line in enumerate(lines):
+  if re.search(r'(?i)\b(20\d{2}|19\d{2})\b',line) and (re.search(r'(?i)experience|work|employment|present|current',line) or re.search(r'[-–—]',line)):
+   exp.append(line[:180])
+ years=0
+ years_found=[int(x) for x in re.findall(r'(?<!\d)(?:19|20)(\d{2})(?!\d)',cv_text)]
+ if years_found:
+  years=max(0,min(40,datetime.now().year-min(1900+y if y<30 else 2000+y for y in years_found)))
+ titles=[]
+ for line in lines:
+  if re.search(r'(?i)\b(manager|analyst|specialist|engineer|developer|consultant|agent|support|assistant|coordinator|administrator|technician|designer|sales|customer service)\b',line) and len(line)<100:
+   titles.append(line)
+ return {'first_name':first_name,'last_name':last_name,'email':detected_email,'phone':detected_phone,'location':'','job_titles':list(dict.fromkeys(titles))[:8],'years_experience':years,'skills':[],'languages':[],'education':[],'work_experience':exp[:8],'missing_required':[],'profile_ready':False}
+
 def parse_profile(cv_text):
  shape={'first_name':'','last_name':'','email':'','phone':'','location':'','job_titles':[],'years_experience':0,'skills':[],'languages':[],'education':[],'work_experience':[],'missing_required':[],'profile_ready':False}
  detected_email,detected_phone=detect_contacts(cv_text)
- p=ai_json('You are a careful CV parser. Use only facts supported by the CV. IMPORTANT: if the system-detected email or phone is provided and non-empty, preserve it exactly and NEVER mark that field missing.',f'''Extract a truthful candidate profile. Never invent information.\nSystem-detected contact information:\nemail={detected_email or 'NOT FOUND'}\nphone={detected_phone or 'NOT FOUND'}\nIf either value is present above, use it exactly. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if it is genuinely absent or unreadable.\nReturn JSON exactly like this: {json.dumps(shape)}\n\nCV:\n{cv_text}''')
+ prompt=f'''Extract a truthful candidate profile. Never invent information.\nSystem-detected contact information:\nemail={detected_email or 'NOT FOUND'}\nphone={detected_phone or 'NOT FOUND'}\nIf either value is present above, use it exactly and NEVER mark that field missing. Required fields: first_name, last_name, email, phone, and at least one work_experience item. Only put a field in missing_required if genuinely absent or unreadable. Return JSON exactly like this: {json.dumps(shape)}\n\nCV:\n{cv_text}'''
+ try:
+  p=ai_json('You are a careful CV parser. Use only facts supported by the CV.',prompt)
+ except Exception as e:
+  app.logger.warning('AI CV parsing unavailable; using local parser: %s',e)
+  p=local_profile(cv_text,detected_email,detected_phone)
  p['email']=detected_email or str(p.get('email') or '').strip(); p['phone']=detected_phone or str(p.get('phone') or '').strip()
  missing=[x for x in (p.get('missing_required') or []) if x not in ('email','phone')]
  if not p['email']: missing.append('email')
@@ -92,11 +119,9 @@ def discover_jobs(location,remote,titles):
 
 def match_jobs(profile,jobs):
  if not jobs: return []
- compact=[]
- for i,j in enumerate(jobs): compact.append({'index':i,'title':j.get('title',''),'company':j.get('company',''),'location':j.get('location',''),'source':j.get('source','')})
- result=ai_json('''You are a conservative recruitment matching engine. Score jobs only from the candidate profile and job data provided. Never invent qualifications. Return one match for every job index. Keep each reason under 16 words.''',f'''Candidate profile:\n{json.dumps(profile)}\n\nJobs:\n{json.dumps(compact)}\n\nReturn JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.''')
- matches={int(x.get('index')):x for x in result.get('matches',[]) if str(x.get('index','')).isdigit()}
- out=[]
+ compact=[{'index':i,'title':j.get('title',''),'company':j.get('company',''),'location':j.get('location',''),'source':j.get('source','')} for i,j in enumerate(jobs)]
+ result=ai_json('You are a conservative recruitment matching engine. Never invent qualifications. Keep each reason under 16 words.',f'''Candidate profile:\n{json.dumps(profile)}\n\nJobs:\n{json.dumps(compact)}\n\nReturn JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.''')
+ matches={int(x.get('index')):x for x in result.get('matches',[]) if str(x.get('index','')).isdigit()}; out=[]
  for i,j in enumerate(jobs):
   m=matches.get(i,{})
   try: score=max(0,min(100,int(m.get('score',0))))
@@ -128,10 +153,13 @@ def search():
  try:
   pid=session.get('profile_id'); row=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone() if pid else None
   if not row: return jsonify(error='Upload your CV first.'),400
-  p=json.loads(row['profile_json']); location=request.form.get('location','').strip(); remote=request.form.get('remote')=='true'
-  jobs=discover_jobs(location,remote,p.get('job_titles',[]))
+  p=json.loads(row['profile_json']); location=request.form.get('location','').strip(); remote=request.form.get('remote')=='true'; jobs=discover_jobs(location,remote,p.get('job_titles',[]))
   if not jobs: return jsonify(opportunities=[],count=0,message='No matching public listings were found. Try another country or enable remote jobs.')
-  matches=match_jobs(p,jobs); out=[]; c=db()
+  try: matches=match_jobs(p,jobs)
+  except Exception as e:
+   app.logger.warning('AI job matching unavailable; using neutral scores: %s',e)
+   matches=[{'job':j,'score':0,'reason':'Match score unavailable; review the job details.'} for j in jobs]
+  out=[]; c=db()
   for item in matches:
    j=item['job']; oid=secrets.token_urlsafe(16); c.execute('INSERT INTO opportunities VALUES (?,?,?,?,?,?,?,?,?,?)',(oid,pid,j['title'],j['company'],j['location'],j['url'],j['source'],item['score'],item['reason'],datetime.now(timezone.utc).isoformat())); out.append({'id':oid,**j,'score':item['score'],'reason':item['reason']})
   c.commit(); c.close(); out.sort(key=lambda x:x['score'],reverse=True); return jsonify(opportunities=out[:20],count=len(out))
@@ -153,8 +181,8 @@ def chat():
   if pid:
    row=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone()
    if row: profile=json.loads(row['profile_json'])
-  instructions='''You are JobHunter AI, a concise and practical job-search assistant. Your answers MUST be short and direct. Default to 1-4 short sentences or up to 4 bullet points. Aim for under 60 words. Give the answer first, then only the most useful detail. Avoid introductions, repetition, long explanations, motivational speeches, and generic advice. Ask a question only when necessary. Never guarantee employment, never claim an application was submitted unless the system confirms it, and never invent job sources or capabilities. If the user asks for more detail, then expand. Be friendly but efficient.'''
-  answer=ai_json(instructions,f'''The website tagline is: "Just drop your CV. Let us cook." Candidate profile if available: {json.dumps(profile)} User question: {message} Return JSON: {{"answer":"short, direct answer only; maximum 60 words unless the user explicitly asks for detail"}}''')
+  instructions='''You are JobHunter AI, a concise and practical job-search assistant. Answers MUST be short and direct. Default to 1-4 short sentences or up to 4 bullets. Aim for under 60 words. Avoid introductions, repetition, long explanations, motivational speeches, and generic advice.'''
+  answer=ai_json(instructions,f'''Candidate profile if available: {json.dumps(profile)} User question: {message} Return JSON: {{"answer":"short direct answer; maximum 60 words"}}''')
   text=str(answer.get('answer','')).strip()
   if len(text)>700: text=text[:697].rsplit(' ',1)[0]+'...'
   return jsonify(answer=text)
