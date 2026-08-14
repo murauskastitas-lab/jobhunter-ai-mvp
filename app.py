@@ -96,17 +96,43 @@ def discover_jobs(location,remote,titles):
   except Exception as e: app.logger.warning('Adzuna failed: %s',e)
  seen=set(); out=[]
  for j in jobs:
-  title=re.sub(r'\s+',' ',j['title']).strip(); company=re.sub(r'\s+',' ',j['company']).strip(); url=j.get('url','').strip(); key=(re.sub(r'\W','',title.lower()),re.sub(r'\W','',company.lower()))+( (url.split('?')[0],) if url else () )
+  title=re.sub(r'\s+',' ',j['title']).strip(); company=re.sub(r'\s+',' ',j['company']).strip(); url=j.get('url','').strip(); key=(re.sub(r'\W','',title.lower()),re.sub(r'\W','',company.lower()))+((url.split('?')[0],) if url else ())
   if title and key not in seen: seen.add(key); j['title']=title; j['company']=company; out.append(j)
  return out[:500]
+def _tokens(s): return set(re.findall(r'[a-z0-9+#.]{2,}',str(s).lower()))
+def _deterministic_score(profile,job):
+ title=_tokens(job.get('title','')); text=_tokens(' '.join(str(job.get(k,'')) for k in ['title','company','location']))
+ profile_terms=set()
+ for v in profile.get('job_titles',[]): profile_terms |= _tokens(v)
+ for v in profile.get('skills',[]): profile_terms |= _tokens(v)
+ for v in profile.get('languages',[]): profile_terms |= _tokens(v)
+ for v in profile.get('work_experience',[]): profile_terms |= _tokens(v)
+ if not profile_terms: return 25,'Job found; CV details are limited, so review the role manually.'
+ exact=len(title & profile_terms); related=0
+ groups=[{'support','service','help','desk','technical','it','desktop','customer'},{'analyst','specialist','consultant','administrator','technician'},{'manager','lead','supervisor'},{'developer','engineer','software','data','cloud','security'}]
+ for g in groups:
+  if title & g and profile_terms & g: related += 1
+ score=min(95,25 + exact*9 + related*12)
+ if exact==0 and related==0: score=12
+ reason='Strong title/skill overlap.' if score>=70 else ('Some relevant experience overlap.' if score>=45 else 'Potentially relevant; review requirements.')
+ return score,reason
 def match_jobs(profile,jobs):
  if not jobs:return []
- compact=[{'index':i,'title':j['title'],'company':j['company'],'location':j['location'],'source':j['source']} for i,j in enumerate(jobs)]
- try:
-  result=ai_json('You are a conservative recruitment matching engine. Never invent qualifications. Score relevance, not exact title equality. Keep each reason under 16 words.',f'Candidate: {json.dumps(profile)} Jobs: {json.dumps(compact)} Return JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.')
-  matches={int(x.get('index')):x for x in result.get('matches',[]) if str(x.get('index','')).isdigit()}
- except Exception: matches={}
- return [{'job':j,'score':max(0,min(100,int(matches.get(i,{}).get('score',0) or 0))),'reason':str(matches.get(i,{}).get('reason','Review this job against your CV.'))[:240]} for i,j in enumerate(jobs)]
+ # Always produce a useful non-zero baseline locally. AI is an enhancement, never the source of truth.
+ base=[]
+ for j in jobs:
+  s,r=_deterministic_score(profile,j); base.append({'job':j,'score':s,'reason':r})
+ compact=[{'index':i,'title':x['job']['title'],'company':x['job']['company'],'location':x['job']['location'],'source':x['job']['source']} for i,x in enumerate(base[:120])]
+ if client:
+  try:
+   result=ai_json('You are a recruitment matching engine. Score real relevance from the candidate profile. Never invent qualifications. A zero score should be used only when the job is clearly unrelated. Return every index provided. Keep reasons under 16 words.',f'Candidate profile: {json.dumps(profile)} Jobs: {json.dumps(compact)} Return JSON exactly: {{"matches":[{{"index":0,"score":50,"reason":"short truthful reason"}}]}}. Score 0-100 based on title, skills, experience and languages. Do not score every job 0.')
+   for x in result.get('matches',[]):
+    try:
+     i=int(x.get('index')); s=int(x.get('score'))
+     if 0<=i<len(base): base[i]['score']=max(1,min(100,s)); base[i]['reason']=str(x.get('reason') or base[i]['reason'])[:240]
+    except (ValueError,TypeError): pass
+  except Exception as e: app.logger.warning('AI matching unavailable; using deterministic scores: %s',e)
+ return base
 def application_draft(profile,job): return ai_json('You write concise professional job applications using only supported facts.',f'Create a short truthful application email. Candidate: {json.dumps(profile)} Job: {json.dumps(job)} Return JSON: {{"subject":"","body":""}}')
 @app.get('/')
 def home(): return render_template('index.html')
