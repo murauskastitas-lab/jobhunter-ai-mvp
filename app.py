@@ -36,15 +36,13 @@ def detect_contacts(cv_text):
  email_match=re.search(r'(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',text)
  email=email_match.group(0).strip() if email_match else ''
  phone=''
- lines=text.splitlines()
- labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]
- sources=labeled+[line for line in lines if line not in labeled]
+ lines=text.splitlines(); labeled=[line for line in lines if re.search(r'(?i)\b(phone|mobile|tel|telephone|contact)\b',line)]; sources=labeled+[line for line in lines if line not in labeled]
  pattern=r'(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,5}\d{2,4}(?!\d)'
  for line in sources:
   for candidate in re.findall(pattern,line):
-   digits=re.sub(r'\D','',candidate); compact=digits
+   digits=re.sub(r'\D','',candidate)
    if not (8 <= len(digits) <= 15): continue
-   if re.fullmatch(r'20\d{2}[01]\d[0-3]\d',compact) or re.fullmatch(r'\d{4}[-./]\d{1,2}[-./]\d{1,2}',candidate.strip()): continue
+   if re.fullmatch(r'20\d{2}[01]\d[0-3]\d',digits) or re.fullmatch(r'\d{4}[-./]\d{1,2}[-./]\d{1,2}',candidate.strip()): continue
    if re.search(r'(?i)\b(19|20)\d{2}\s*[-–]\s*(19|20)\d{2}\b',line): continue
    phone=re.sub(r'\s+',' ',candidate).strip(' -'); break
   if phone: break
@@ -64,8 +62,8 @@ def parse_profile(cv_text):
  p['missing_required']=list(dict.fromkeys(missing)); p['profile_ready']=not bool(p['missing_required']); return p
 
 def fetch_json(url):
- req=urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0'}); 
- with urllib.request.urlopen(req,timeout=20,context=ssl.create_default_context()) as r: return json.loads(r.read().decode('utf-8',errors='ignore'))
+ req=urllib.request.Request(url,headers={'User-Agent':'JobHunterAI/1.0'})
+ with urllib.request.urlopen(req,timeout=8,context=ssl.create_default_context()) as r: return json.loads(r.read().decode('utf-8',errors='ignore'))
 
 def discover_jobs(location,remote,titles):
  jobs=[]
@@ -90,9 +88,22 @@ def discover_jobs(location,remote,titles):
  for j in jobs:
   k=(j['title'].lower(),j['company'].lower(),j['url'])
   if k not in seen: seen.add(k); out.append(j)
- return out[:120]
+ return out[:24]
 
-def match_job(profile,job): return ai_json('You are a conservative recruitment matching engine. Never invent candidate qualifications.',f'''Score this job for the candidate from 0 to 100. Candidate: {json.dumps(profile)} Job: {json.dumps(job)} Return JSON: {{"score":0,"reason":"one short truthful reason"}}''')
+def match_jobs(profile,jobs):
+ if not jobs: return []
+ compact=[]
+ for i,j in enumerate(jobs): compact.append({'index':i,'title':j.get('title',''),'company':j.get('company',''),'location':j.get('location',''),'source':j.get('source','')})
+ result=ai_json('''You are a conservative recruitment matching engine. Score jobs only from the candidate profile and job data provided. Never invent qualifications. Return one match for every job index. Keep each reason under 16 words.''',f'''Candidate profile:\n{json.dumps(profile)}\n\nJobs:\n{json.dumps(compact)}\n\nReturn JSON exactly: {{"matches":[{{"index":0,"score":0,"reason":"short truthful reason"}}]}}. Score 0-100.''')
+ matches={int(x.get('index')):x for x in result.get('matches',[]) if str(x.get('index','')).isdigit()}
+ out=[]
+ for i,j in enumerate(jobs):
+  m=matches.get(i,{})
+  try: score=max(0,min(100,int(m.get('score',0))))
+  except Exception: score=0
+  out.append({'job':j,'score':score,'reason':str(m.get('reason',''))[:240]})
+ return out
+
 def application_draft(profile,job): return ai_json('You write concise professional job applications using only supported facts.',f'''Create a short truthful application email. Candidate: {json.dumps(profile)} Job: {json.dumps(job)} Do not invent facts. Return JSON: {{"subject":"","body":""}}''')
 
 @app.get('/')
@@ -117,11 +128,14 @@ def search():
  try:
   pid=session.get('profile_id'); row=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone() if pid else None
   if not row: return jsonify(error='Upload your CV first.'),400
-  p=json.loads(row['profile_json']); location=request.form.get('location','').strip(); remote=request.form.get('remote')=='true'; jobs=discover_jobs(location,remote,p.get('job_titles',[])); out=[]; c=db()
-  for j in jobs[:60]:
-   m=match_job(p,j); score=max(0,min(100,int(m.get('score',0)))); oid=secrets.token_urlsafe(16); c.execute('INSERT INTO opportunities VALUES (?,?,?,?,?,?,?,?,?,?)',(oid,pid,j['title'],j['company'],j['location'],j['url'],j['source'],score,m.get('reason',''),datetime.now(timezone.utc).isoformat())); out.append({'id':oid,**j,'score':score,'reason':m.get('reason','')})
-  c.commit(); c.close(); out.sort(key=lambda x:x['score'],reverse=True); return jsonify(opportunities=out[:50],count=len(out))
- except Exception as e: app.logger.exception('job search failed'); return jsonify(error=str(e)),400
+  p=json.loads(row['profile_json']); location=request.form.get('location','').strip(); remote=request.form.get('remote')=='true'
+  jobs=discover_jobs(location,remote,p.get('job_titles',[]))
+  if not jobs: return jsonify(opportunities=[],count=0,message='No matching public listings were found. Try another country or enable remote jobs.')
+  matches=match_jobs(p,jobs); out=[]; c=db()
+  for item in matches:
+   j=item['job']; oid=secrets.token_urlsafe(16); c.execute('INSERT INTO opportunities VALUES (?,?,?,?,?,?,?,?,?,?)',(oid,pid,j['title'],j['company'],j['location'],j['url'],j['source'],item['score'],item['reason'],datetime.now(timezone.utc).isoformat())); out.append({'id':oid,**j,'score':item['score'],'reason':item['reason']})
+  c.commit(); c.close(); out.sort(key=lambda x:x['score'],reverse=True); return jsonify(opportunities=out[:20],count=len(out))
+ except Exception as e: app.logger.exception('job search failed'); return jsonify(error=str(e)),500
 @app.post('/api/draft')
 def draft():
  try:
@@ -144,7 +158,7 @@ def chat():
   text=str(answer.get('answer','')).strip()
   if len(text)>700: text=text[:697].rsplit(' ',1)[0]+'...'
   return jsonify(answer=text)
- except Exception as e: app.logger.exception('chat failed'); return jsonify(error=str(e)),400
+ except Exception as e: app.logger.exception('chat failed'); return jsonify(error=str(e)),500
 @app.post('/api/feedback')
 def feedback():
  try:
@@ -155,13 +169,11 @@ def feedback():
 
 @app.errorhandler(404)
 def not_found(e):
- if request.path.startswith('/api/'):
-  return jsonify(error=f'API endpoint not found: {request.path}'),404
+ if request.path.startswith('/api/'): return jsonify(error=f'API endpoint not found: {request.path}'),404
  return e
 @app.errorhandler(405)
 def method_not_allowed(e):
- if request.path.startswith('/api/'):
-  return jsonify(error=f'Method {request.method} is not allowed for {request.path}'),405
+ if request.path.startswith('/api/'): return jsonify(error=f'Method {request.method} is not allowed for {request.path}'),405
  return e
 @app.errorhandler(413)
 def too_large(_): return jsonify(error='CV is too large. Maximum 8 MB.'),413
