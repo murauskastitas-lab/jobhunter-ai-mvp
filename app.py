@@ -29,6 +29,8 @@ def init_db():
         id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, title TEXT, company TEXT,
         location TEXT, url TEXT, source TEXT, score INTEGER, reason TEXT,
         created_at TEXT NOT NULL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS feedback (
+        id TEXT PRIMARY KEY, name TEXT, rating INTEGER, message TEXT, created_at TEXT NOT NULL)''')
     c.commit(); c.close()
 
 init_db()
@@ -80,7 +82,6 @@ def fetch_json(url):
 
 def discover_jobs(location, remote, titles):
     jobs=[]
-    # Public APIs only for MVP. This avoids scraping protected sites or bypassing CAPTCHAs.
     try:
         data=fetch_json('https://www.arbeitnow.com/api/job-board-api')
         for j in data.get('data',[]):
@@ -167,6 +168,38 @@ def draft():
         p=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone()
         if not r or not p: return jsonify(error='Opportunity not found.'),404
         d=application_draft(json.loads(p['profile_json']),dict(r)); return jsonify(**d)
+    except Exception as e:
+        return jsonify(error=str(e)),400
+
+@app.post('/api/chat')
+def chat():
+    try:
+        message=request.form.get('message','').strip()
+        if not message: return jsonify(error='Please type a question.'),400
+        if len(message)>1500: return jsonify(error='Question is too long.'),400
+        profile=''
+        pid=session.get('profile_id')
+        if pid:
+            row=db().execute('SELECT profile_json FROM profiles WHERE id=?',(pid,)).fetchone()
+            if row: profile=json.loads(row['profile_json'])
+        answer=ai_json('''You are JobHunter AI, a friendly professional career assistant on a job-search website. Answer clearly and briefly. Explain how JobHunter AI works: users upload a CV, AI checks their profile, searches relevant public job sources, scores matches, and prepares tailored applications. Do not promise guaranteed employment, guaranteed interviews, or actions the system cannot actually perform. Never claim that a job application was submitted unless the website explicitly confirms it. If asked about career topics, give useful practical advice. If a user asks for a feature the MVP does not have, say so honestly.''',
+                       f'''Website context: JobHunter AI is designed to make job seeking less stressful and more hands-off.
+Candidate profile if available: {json.dumps(profile)}
+User question: {message}
+Return JSON: {{"answer":"your answer"}}''')
+        return jsonify(answer=answer.get('answer',''))
+    except Exception as e:
+        app.logger.exception('chat failed'); return jsonify(error=str(e)),400
+
+@app.post('/api/feedback')
+def feedback():
+    try:
+        name=request.form.get('name','').strip()[:80]
+        message=request.form.get('message','').strip()[:1000]
+        rating=max(1,min(5,int(request.form.get('rating','5'))))
+        if not message: return jsonify(error='Please write a short message.'),400
+        c=db(); c.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',(secrets.token_urlsafe(12),name,rating,message,datetime.now(timezone.utc).isoformat())); c.commit(); c.close()
+        return jsonify(ok=True)
     except Exception as e:
         return jsonify(error=str(e)),400
 
