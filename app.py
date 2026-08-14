@@ -1,4 +1,4 @@
-import io, os, re, json, sqlite3, secrets, urllib.request, ssl
+import io, os, re, json, sqlite3, secrets, urllib.request, urllib.parse, ssl
 from datetime import datetime, timezone
 from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
@@ -65,7 +65,6 @@ COUNTRY_TERMS={'lithuania':['lithuania','vilnius','kaunas','klaipeda','siauliai'
 COUNTRY_CODE={'lithuania':'lt','germany':'de','norway':'no','thailand':'th','philippines':'ph','united kingdom':'gb','usa':'us'}
 def discover_jobs(location,remote,titles):
  jobs=[]; loc=(location or '').strip().lower(); terms=COUNTRY_TERMS.get(loc,[loc] if loc else [])
- # 1) European/public aggregator: collect broadly; exact CV title is NEVER a hard filter.
  try:
   data=fetch_json('https://www.arbeitnow.com/api/job-board-api')
   for j in data.get('data',[]):
@@ -74,7 +73,6 @@ def discover_jobs(location,remote,titles):
    if remote and not (j.get('remote') or 'remote' in hay): continue
    jobs.append({'title':j.get('title',''),'company':j.get('company_name',''),'location':j.get('location',''),'url':j.get('url',''),'source':'Arbeitnow'})
  except Exception as e: app.logger.warning('Arbeitnow failed: %s',e)
- # 2) Remotive: use broad remote feed. Its public API is explicitly a remote-jobs feed.
  if remote:
   try:
    data=fetch_json('https://remotive.com/api/remote-jobs')
@@ -83,29 +81,22 @@ def discover_jobs(location,remote,titles):
     if loc and loc!='worldwide' and terms and not any(t in hay or t in req for t in terms): continue
     jobs.append({'title':j.get('title',''),'company':j.get('company_name',''),'location':j.get('candidate_required_location','Remote'),'url':j.get('url',''),'source':'Remotive'})
   except Exception as e: app.logger.warning('Remotive failed: %s',e)
-  # 3) Jobicy: up to 100 remote listings per request, with region support.
   try:
-   geo=COUNTRY_CODE.get(loc,'')
-   url='https://jobicy.com/api/v2/remote-jobs?count=100'+(('&geo='+geo) if geo else '')
+   geo=COUNTRY_CODE.get(loc,''); url='https://jobicy.com/api/v2/remote-jobs?count=100'+(('&geo='+geo) if geo else '')
    data=fetch_json(url)
-   for j in data.get('jobs',[]):
-    jobs.append({'title':j.get('jobTitle',''),'company':j.get('companyName',''),'location':j.get('jobGeo','Remote'),'url':j.get('url',''),'source':'Jobicy'})
+   for j in data.get('jobs',[]): jobs.append({'title':j.get('jobTitle',''),'company':j.get('companyName',''),'location':j.get('jobGeo','Remote'),'url':j.get('url',''),'source':'Jobicy'})
   except Exception as e: app.logger.warning('Jobicy failed: %s',e)
- # 4) Adzuna, if user has configured credentials. This adds a much larger country-specific inventory.
  app_id=os.getenv('ADZUNA_APP_ID',''); app_key=os.getenv('ADZUNA_APP_KEY',''); code=COUNTRY_CODE.get(loc,'')
  if app_id and app_key and code:
   try:
    for page in range(1,4):
-    url=f'https://api.adzuna.com/v1/api/jobs/{code}/search/{page}?app_id={urllib.parse.quote(app_id)}&app_key={urllib.parse.quote(app_key)}&results_per_page=50&content-type=application/json'
-    data=fetch_json(url)
+    url=f'https://api.adzuna.com/v1/api/jobs/{code}/search/{page}?app_id={urllib.parse.quote(app_id)}&app_key={urllib.parse.quote(app_key)}&results_per_page=50&content-type=application/json'; data=fetch_json(url)
     for j in data.get('results',[]): jobs.append({'title':j.get('title',''),'company':(j.get('company') or {}).get('display_name',''),'location':(j.get('location') or {}).get('display_name',''),'url':j.get('redirect_url',''),'source':'Adzuna'})
     if len(data.get('results',[]))<50: break
   except Exception as e: app.logger.warning('Adzuna failed: %s',e)
- # Deduplicate across every source, retaining the first canonical URL.
  seen=set(); out=[]
  for j in jobs:
-  title=re.sub(r'\s+',' ',j['title']).strip(); company=re.sub(r'\s+',' ',j['company']).strip(); url=j.get('url','').strip(); key=(re.sub(r'\W','',title.lower()),re.sub(r'\W','',company.lower()))
-  if url: key+=(url.split('?')[0],)
+  title=re.sub(r'\s+',' ',j['title']).strip(); company=re.sub(r'\s+',' ',j['company']).strip(); url=j.get('url','').strip(); key=(re.sub(r'\W','',title.lower()),re.sub(r'\W','',company.lower()))+( (url.split('?')[0],) if url else () )
   if title and key not in seen: seen.add(key); j['title']=title; j['company']=company; out.append(j)
  return out[:500]
 def match_jobs(profile,jobs):
